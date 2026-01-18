@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+ENV/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+.cursor/
+
+# Secrets / env
+.env
+.env.*
+
+# Model weights / large local assets
+Qwen3-8B-quantized.w4a16/
+*.safetensors
+*.bin
+*.pt
+*.gguf
+
+# Benchmark outputs / logs (repro can be done by rerunning)
+logs/
+benchmark_optimized_*.json
+comparison_optimized_*.json
+benchmark_*.json
+comparison_*.json
+mas_output_*.txt
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+
+# Windows zone identifiers sometimes appear when copying files
+*:Zone.Identifier
+

@@ -1,0 +1,22 @@
+# Core LLM & Agents
+langchain
+langgraph
+langchain-openai
+langchain-community
+arxiv
+
+# Dataset
+datasets
+
+# Metrics - Lexical
+rouge-score
+nltk
+
+# Metrics - Semantic
+bert-score
+
+# Metrics - Additional
+sacrebleu
+
+# Utilities
+numpy

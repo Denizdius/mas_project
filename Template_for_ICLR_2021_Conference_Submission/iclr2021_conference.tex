@@ -1,0 +1,138 @@
+
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2021_conference}
+\usepackage{graphicx}
+\usepackage{booktabs}
+
+\title{Optimized Related Work Generation with Multi-Agent Systems}
+
+\author{
+Hatice Nur K\"om\"urc\"u \\
+Izmir Institute of Technology \\
+\texttt{(student id: 310201106)}
+\And
+Deniz Karabacak \\
+Izmir Institute of Technology \\
+\texttt{(student id: 333078012)}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Writing the Related Work section of an academic paper requires reasoning information from multiple documents while identifying gaps in the literature. While authors often miss recent papers in a time-consuming process, single-agent LLM models often produce shallow, sequential summaries and may hallucinate citations. We present a local, autonomous Multi-Agent System (MAS) that decomposes related-work generation into planning, outlining, parallelized writing, and a critic-driven revision loop. We applied benchmarking on MAS against a single-agent model on a high-reference subset of OARelatedWork and report lexical, semantic, citation-quality, and LLM-judge (GRC) metrics. On 10 high-reference samples (minimum 7 references), the MAS substantially improves grounding and citation precision, at the cost of higher runtime.
+\end{abstract}
+
+\section{Introduction}
+The process of writing related work is slow and error-prone: authors must read and compare many papers and group them into themes. Optimizing this process with LLMs is attractive, but a single-agent model produces frequent superficial summaries and ungrounded claims, motivating stronger evaluation protocols for related-work generation \citep{expertEvalRW2025}. We propose a multi-agent system decomposition which improves factual grounding and completeness by separating concerns: (i) a planner extracts themes, (ii) an outliner allocates papers to themes, (iii) multiple writers draft sections in parallel, and (iv) a critic checks grounding/coherence/completeness and requests revisions. This design aligns with broader evidence that agentic workflows can improve reliability in research-oriented tasks \citep{agentLaboratory2025,lira2025}.
+
+\section{Related Work}
+\label{sec:related_work}
+Literature review and survey generation have recently gained attention as a distinct evaluation target, including benchmark construction and standardized evaluation protocols.
+SURGE proposes a benchmark and evaluation framework for scientific survey generation, emphasizing multidimensional evaluation beyond lexical overlap \citep{surge2025}.
+SciReviewGen is a large-scale dataset for automatic literature review generation and has been used in subsequent systems and evaluations \citep{scireviewgen2023}.
+
+Recent work also highlights that automatic metrics alone are insufficient for scholarly writing quality.
+Expert preference-based evaluation frameworks for related work generation provide human-aligned assessment dimensions such as coherence and scholarly appropriateness \citep{expertEvalRW2025}.
+
+More directly, \citet{chen2022tag} studies \textit{related work generation} as a target-aware abstractive task and uses contrastive learning to better align generated related work with the target paper and cited literature.
+\citet{liu2025selectreadwrite} propose a multi-agent framework for \textit{full-text}-based related work generation that separates selection, reading, and writing.
+Compared to these systems, our project focuses on a local, prompt-driven MAS with an explicit critic loop and evaluates citation quality (precision/recall/F1) and grounding alongside ROUGE/BERTScore/LSA.
+
+On the systems side, multi-agent approaches (e.g., LiRA) decompose review writing into specialized roles and incorporate reliability mechanisms to improve readability and reduce hallucinations \citep{lira2025}.
+General agent-development environments (e.g., Agent Laboratory) motivate modular agent roles and iterative research workflows for LLM agents \citep{agentLaboratory2025}.
+
+\section{Method}
+\label{sec:method}
+
+\subsection{Single Agent}
+We implement an end-to-end pipeline for the single-agent model in which one LLM instance performs retrieval-context reading, planning, logical reasoning, and gap analysis in a single generation step, with optional self-critique refinement. In both the Single-Agent and MAS, the input consists of (i) a target paper descriptor (title/topic, optionally an abstract and fields of study) and (ii) a set of candidate papers (typically abstracts) that the system should cite and synthesize.
+
+In interactive mode, the retrieval process uses the arXiv API: given a user query, the agent requests the top-5 most relevant papers and constructs a compact per-paper context containing title, authors, year, and abstract. Each paper is also assigned an author--year citation string (e.g., \texttt{(Smith et al., 2020)}) derived from the first author's surname and publication year to encourage consistent citations in generation. On the contrary, in benchmark mode, retrieval is disabled, and the agent is directly provided with the paper contexts from OARelatedWork.
+
+The generation step concatenates the paper contexts into a single prompt and asks the model to produce 2--4 paragraphs of continuous prose with thematic grouping, smooth transitions, and an explicit gap analysis at the end. Prompts explicitly require that every factual claim be grounded with an author--year citation. If enabled, a second pass performs self-critique and rewrites the draft to fix missing citations, weak transitions, and missing gap analysis. Implementation-wise, this pipeline is represented as a small LangGraph with the nodes \texttt{retrieve} $\rightarrow$ \texttt{generate} $\rightarrow$ \texttt{critique} $\rightarrow$ \texttt{finalize}. This model is simple and fast, but it has a bottleneck by a single prompt attempting to jointly solve planning, synthesis, and fact-checking, and it can degrade under long-context pressure (e.g., sequential listing of papers, shallow synthesis, and occasional citation errors), which addresses the need for parallelism. 
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{multi_agent_workflow.png}
+  \caption{Multi-agent workflow (Planner $\rightarrow$ Outliner $\rightarrow$ parallel Writers $\leftrightarrow$ Critic $\rightarrow$ assembly).}
+\end{figure}
+
+\subsection{Multi-Agent System}
+Our multi-agent system decomposes the same input into specialized roles so that planning, writing, and quality control are handled separately. The system first standardizes the paper contexts and citation strings, then performs multi-step generation with a revision loop. This design reduces the burden on a single prompt and enables parallel execution.
+
+We use a locally hosted Qwen3-8B model (4-bit quantized) served via vLLM for high-throughput inference \citep{vllm2023,qwen3}. LangGraph orchestrates the cyclic workflow (Writer $\leftrightarrow$ Critic), while LangChain components and LangSmith-style tracing support prompt management and observability \citep{langgraph,langchain,langsmith}.
+
+In the first stage, the Planner reads all provided paper contexts and clusters them into a small number of themes. Each theme is represented with short descriptors and a list of assigned papers. The Outliner then turns these themes into a concrete writing plan, defining section units and pre-assigning which citation keys must appear in each section. Pre-assigning citations before writing is important for grounding: it forces the Writer to cover specific evidence rather than inventing references after the fact.
+
+In the writing stage, multiple Writers run in parallel, each generating one section. Writers are constrained to synthesize (compare and contrast) the assigned papers, to cite all assigned citation keys, and to stay within a strict length budget (the budget scales with the number of citations to avoid overly long outputs). After each section draft, the Critic evaluates Grounding, Coherence, and Completeness and checks citation usage. If the draft does not meet the thresholds (or if citation accuracy is low), the Critic produces actionable feedback and the Writer revises the section. This revision loop is repeated up to a fixed maximum number of rounds, and sections can be revised independently and in parallel.
+
+Finally, the system assembles the accepted sections into a single Related Work text with minimal post-processing, and if the combined output exceeds the target length it is condensed to remain comparable to the reference length in the benchmark.
+
+We maintain two evaluation modes. In interactive demo mode, papers are retrieved from the arXiv API and then passed through the same Planner--Outliner--Writer--Critic pipeline. In benchmark mode, retrieval is disabled and the system consumes the provided paper contexts from OARelatedWork, enabling controlled evaluation against reference related-work text and references.
+
+\section{Evaluation}
+\label{sec:evaluation}
+
+\subsection{Dataset Usage}
+We evaluate on OARelatedWork, which provides (i) a ground-truth Related Work section and (ii) its reference list.
+To stress-test citation handling and completeness, we filter to a \textbf{high-reference subset} by selecting samples with at least 7 references (min-refs = 7).
+In our benchmark implementation, we stream the dataset and take the first $n=10$ samples that satisfy this filter.
+\noindent We also report implementation and development details to make the benchmark interpretable and reproducible. During development we observed several failure modes that motivated the final design: (i) too-few references per sample (resolved by filtering to min-refs=7), (ii) length bloat in early MAS versions (resolved by dynamic length control and a condensing step), (iii) a non-engaging revision loop when the critic accepted too easily (resolved by stricter thresholds), and (iv) degenerate LSA scores near 1.0 when computed in a too-small document space (resolved by computing LSA in a richer TF--IDF space that includes source-paper context).
+
+\noindent For reproducibility, we use the HuggingFace dataset \texttt{BUT-FIT/OARelatedWork} (abstracts configuration) in streaming mode and filter by min-refs=7, taking the first $n=10$ qualifying samples. Both systems are evaluated on the same 10 sample IDs. We use a local Qwen3-8B model served via vLLM with nucleus sampling (top-$p=0.95$ in thinking mode) and per-role temperatures. In the optimized benchmark configuration, MAS uses max\_revisions=2 and a strict critic acceptance threshold (min\_score\_accept=9). All prompts, temperatures, and raw outputs are logged in detailed JSON traces.
+
+\subsection{Evaluation Metrics}
+We report a multi-dimensional suite: lexical overlap (ROUGE-1/2/L), semantic similarity (BERTScore and LSA similarity), citation quality (citation precision, recall, and F1), LLM-judge quality (GRC scores: Grounding, Coherence, Completeness), and efficiency (runtime per sample).
+
+We also report win rate and success rate. Win rate is defined per-metric as the fraction of samples where MAS achieves a higher score than the single-agent baseline on that metric (ties are counted separately). Using the saved comparison run on the same 10 sample IDs, MAS wins on Grounding in 10/10 samples, Completeness in 8/10, Citation Recall in 9/10, and Citation Precision in 5/10. We also report an overall win rate of 8/10, where MAS wins on at least 3 of the following 5 metrics: Grounding, Coherence, Completeness, Citation Recall, Citation Precision. For MAS, success rate is defined as the fraction of samples where every section was accepted by the critic at least once during the revision history; on this run, MAS success rate is 3/10.
+
+\subsection{Results}
+Table~\ref{tab:results} summarizes the single-agent vs. MAS comparison on the same evaluation set (n=10, min-refs=7).
+
+\begin{table}[t]
+\centering
+\caption{Benchmark results on OARelatedWork high-reference subset (n=10, min-refs=7). Higher is better for all metrics except runtime.}
+\label{tab:results}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Metric} & \textbf{Single Agent} & \textbf{MAS} \\
+\midrule
+ROUGE-1 (mean) & 0.392 & 0.383 \\
+ROUGE-2 (mean) & 0.099 & 0.099 \\
+ROUGE-L (mean) & 0.159 & 0.158 \\
+BERTScore (mean) & 0.840 & 0.836 \\
+LSA similarity (mean) & 0.622 & 0.401 \\
+\midrule
+Citation precision (mean) & 0.796 & 0.960 \\
+Citation recall (mean) & 0.721 & 1.690 \\
+Citation F1 (mean) & 0.735 & 1.214 \\
+\midrule
+GRC Grounding (mean) & 4.7 & 8.15 \\
+GRC Coherence (mean) & 9.2 & 8.92 \\
+GRC Completeness (mean) & 6.1 & 7.32 \\
+\midrule
+Time/sample (seconds, mean) & 67.0 & 318.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent The MAS improves citation precision and grounding substantially, indicating fewer hallucinated or weakly supported statements compared to the single-agent baseline. This is consistent with the MAS design, where planning/outlining reduce structural errors and the critic-driven revision loop penalizes missing or incorrect citations.
+
+\noindent The single-agent baseline achieves higher LSA similarity, while the MAS shows lower LSA despite improvements in grounding. We interpret this as a synthesis trade-off: multi-agent planning and section-wise rewriting can reorganize content and add higher-level comparisons that reduce similarity to the specific reference phrasing, even when the generated text is better grounded.
+
+\noindent Citation recall can exceed 1.0 in our setting because the model may cite more papers than those present in the ground-truth reference list for a given sample (over-citation) and because citation matching is approximate. Therefore, citation recall should be interpreted jointly with citation precision and qualitative inspection.
+
+\noindent Finally, the MAS is slower (due to multiple LLM calls and revision cycles) but improves accuracy-related metrics that are critical for scientific writing, suggesting that it is preferable when citation correctness and grounding matter more than raw latency.
+
+\section{Conclusion and Future Work}
+\label{sec:conclusion}
+We presented a local Multi-Agent System for automated related-work generation that decomposes the task into planning, outlining, parallel writing, and critic-based revision.
+On a high-reference subset of OARelatedWork, the MAS improves factual grounding and citation precision compared to a single-agent baseline, at the cost of higher runtime.
+
+\paragraph{Future directions.}
+Promising directions include: (i) calibrating the critic with human feedback to reduce false accepts/rejects, (ii) improving citation matching to avoid recall values above 1.0, (iii) integrating an explicit \textbf{citation graph} (paper--paper network) to support better theme discovery, evidence chaining, and gap analysis when selecting and connecting papers, (iv) scaling to more diverse datasets and domains (e.g., SciReviewGen and SURGE-style benchmarks) \citep{scireviewgen2023,surge2025}, and (v) a dedicated performance study comparing throughput/latency on different GPUs (e.g., RTX 4080 Laptop vs newer mobile GPUs) and with multi-GPU serving for parallel agent calls.
+
+\bibliography{iclr2021_conference}
+\bibliographystyle{iclr2021_conference}
+
+\end{document}
