@@ -37,6 +37,9 @@ benchmark_*.json
 comparison_*.json
 mas_output_*.txt
 
+# Keep only latest benchmark script in repo
+benchmark.py
+
 # LaTeX build artifacts
 *.aux
 *.bbl
@@ -47,6 +50,9 @@ mas_output_*.txt
 *.out
 *.synctex.gz
 *.toc
+
+# Ignore LaTeX/report template folder (keep repo code-only)
+Template_for_ICLR_2021_Conference_Submission/
 
 # Windows zone identifiers sometimes appear when copying files
 *:Zone.Identifier
